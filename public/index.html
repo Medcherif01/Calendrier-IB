@@ -4,11 +4,11 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Calendrier des Évaluations – KIS (PEI/DP)</title>
-  <!-- Lien vers le fichier CSS externe -->
+  <!-- Ceci lie le fichier CSS externe qui contient TOUT LE DESIGN -->
   <link rel="stylesheet" href="Style.css">
 </head>
 <body onload="initApp()">
-  <!-- ===== Barre supérieure fixe ===== -->
+  <!-- ===== Barre supérieure fixe (avec logo) ===== -->
   <div class="topbar">
     <div class="brand">
       <img src="https://lh3.googleusercontent.com/d/1lQ3Babrs3Wgv4rakVmkK0oCWcM0cTKPK" alt="Alkawthar Logo" />
@@ -40,6 +40,8 @@
   <!-- ===== Grille principale ===== -->
   <div class="board-wrap">
     <table id="cal">
+      <!-- Les blocs ci-dessous conservent la structure et les classes CSS originales -->
+      
       <!-- ===== BLOC 1 : Août / Septembre – Semaines 1 à 4 ===== -->
       <thead class="head-top">
         <tr>
@@ -160,7 +162,7 @@
           </div></td>
         </tr>
       </tbody>
-
+      
       <!-- ===== BLOC 3 : Octobre / Novembre – S9 à S12 ===== -->
       <thead class="head-top">
         <tr>
@@ -413,7 +415,6 @@
 
           <td class="eval"><div class="card" id="S26" data-semaine-id="S26">
             <span class="wtitle">Semaine 26:</span><span class="wrange">Mars 29 – Avril 02</span>
-            <!-- L'évaluation statique est retirée, le JS la chargera -->
             <div class="box"><div class="ttl">Ajouter une Évaluation</div><form onsubmit="addEvaluation(event,'S26')">
               <label>Matière:</label><select name="matiere" required><option value="">-- Choisir --</option><option>Français LL</option><option>Anglais AL</option><option>Mathématiques</option><option>Sciences</option><option>IS</option><option>Arts</option><option>Design</option></select>
               <label>Unité/Thème:</label><input name="unite" required/><label>Critère:</label>
