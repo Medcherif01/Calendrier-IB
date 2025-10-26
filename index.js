@@ -1,98 +1,99 @@
-import express from "express";
-import cors from "cors";
-import { MongoClient } from "mongodb";
-import PizZip from "pizzip";
-import Docxtemplater from "docxtemplater";
-import fetch from "node-fetch";
+// index.js
+
+const express = require('express');
+const mongoose = require('mongoose');
+const path = require('path');
+
+// Pour charger les variables d'environnement localement (sur Vercel, elles sont injectées)
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-app.use(express.static("public"));
+const port = process.env.PORT || 3000;
 
-const mongoUrl = process.env.MONGO_URL;
-const client = new MongoClient(mongoUrl);
-let db;
+// Middleware
+app.use(express.json()); // pour analyser les corps de requête JSON
 
-async function initDB() {
-  await client.connect();
-  db = client.db("EvaluationsDB");
-  console.log("✅ MongoDB connecté !");
+// --- Connexion MongoDB ---
+const MONGO_URI = process.env.MONGO_URI;
+
+if (!MONGO_URI) {
+    console.error("Erreur: MONGO_URI n'est pas défini. Assurez-vous d'avoir un fichier .env ou des variables Vercel.");
+    // En production sur Vercel, on laisse l'app démarrer, mais l'API échouera.
+} else {
+    mongoose.connect(MONGO_URI)
+      .then(() => console.log('Connexion à MongoDB réussie!'))
+      .catch(err => console.error('Erreur de connexion à MongoDB:', err));
 }
-initDB();
 
-// 📌 Sauvegarde d’une évaluation
-app.post("/api/save", async (req, res) => {
-  try {
-    const { classe, semaine, matiere, unite, critere } = req.body;
-    if (!classe || !semaine || !matiere || !unite || !critere)
-      return res.status(400).json({ error: "Champs manquants" });
-
-    const coll = db.collection("evaluations");
-    await coll.insertOne({ classe, semaine, matiere, unite, critere, date: new Date() });
-
-    res.json({ ok: true });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: e.message });
-  }
+// --- Modèle Mongoose ---
+const evaluationSchema = new mongoose.Schema({
+    classe: { type: String, required: true },
+    semaineId: { type: String, required: true }, // ex: S2, S30
+    matiere: { type: String, required: true },
+    unite: { type: String, required: true },
+    critere: { type: String, required: true },
+    dateCreation: { type: Date, default: Date.now }
 });
 
-// 📌 Lecture par classe
-app.get("/api/evaluations/:classe", async (req, res) => {
-  const coll = db.collection("evaluations");
-  const data = await coll.find({ classe: req.params.classe }).toArray();
-  res.json(data);
+const Evaluation = mongoose.models.Evaluation || mongoose.model('Evaluation', evaluationSchema);
+
+// --- Routes API (/api/...) ---
+
+// 1. GET: Récupérer les évaluations pour une classe donnée
+app.get('/api/evaluations', async (req, res) => {
+    try {
+        const { classe } = req.query;
+        if (!classe) {
+            return res.status(400).json({ message: 'Le paramètre "classe" est requis.' });
+        }
+        const evaluations = await Evaluation.find({ classe }).sort({ semaineId: 1, matiere: 1 });
+        res.json(evaluations);
+    } catch (err) {
+        res.status(500).json({ message: 'Erreur lors de la récupération des évaluations', error: err.message });
+    }
 });
 
-// 📌 Suppression d’une évaluation
-app.delete("/api/evaluations/:id", async (req, res) => {
-  const { ObjectId } = await import("mongodb");
-  const coll = db.collection("evaluations");
-  await coll.deleteOne({ _id: new ObjectId(req.params.id) });
-  res.json({ ok: true });
+// 2. POST: Ajouter une nouvelle évaluation
+app.post('/api/evaluations', async (req, res) => {
+    try {
+        const { classe, semaineId, matiere, unite, critere } = req.body;
+        if (!classe || !semaineId || !matiere || !unite || !critere) {
+            return res.status(400).json({ message: 'Tous les champs sont requis.' });
+        }
+        const newEvaluation = new Evaluation({ classe, semaineId, matiere, unite, critere });
+        await newEvaluation.save();
+        res.status(201).json(newEvaluation);
+    } catch (err) {
+        res.status(500).json({ message: "Erreur lors de l'enregistrement de l'évaluation", error: err.message });
+    }
 });
 
-// 📄 Génération d’un fichier Word dynamique
-app.get("/api/generate-word/:classe", async (req, res) => {
-  try {
-    const classe = req.params.classe;
-    const coll = db.collection("evaluations");
-    const evals = await coll.find({ classe }).toArray();
+// 3. DELETE: Supprimer une évaluation par son ID
+app.delete('/api/evaluations/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await Evaluation.findByIdAndDelete(id);
+        if (!result) {
+            return res.status(404).json({ message: 'Évaluation non trouvée.' });
+        }
+        res.status(200).json({ message: 'Évaluation supprimée.' });
+    } catch (err) {
+        res.status(500).json({ message: "Erreur lors de la suppression de l'évaluation", error: err.message });
+    }
+});
 
-    // Récupération du modèle distant
-    const templateURL = process.env.WORD_TEMPLATE_URL;
-    const response = await fetch(templateURL);
-    const content = await response.arrayBuffer();
+// --- Servir les fichiers statiques (pour le développement local) ---
+// Vercel gère déjà les routes statiques via vercel.json, mais ceci est utile pour tester localement.
+app.use(express.static(path.join(__dirname, 'public')));
 
-    const zip = new PizZip(content);
-    const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
+// Point d'entrée pour Vercel (doit exporter l'application Express)
+module.exports = app;
 
-    doc.render({
-      classe,
-      evaluations: evals.map((e, i) => ({
-        num: i + 1,
-        semaine: e.semaine,
-        matiere: e.matiere,
-        unite: e.unite,
-        critere: e.critere
-      }))
+// Démarrer le serveur uniquement en développement local
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(port, () => {
+        console.log(`Serveur démarré sur http://localhost:${port}`);
     });
-
-    const buffer = doc.getZip().generate({ type: "nodebuffer" });
-
-    // Envoi direct du buffer au client
-    res.setHeader("Content-Disposition", `attachment; filename="${classe}_Evaluations.docx"`);
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    );
-    res.send(buffer);
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Serveur prêt sur le port ${PORT}`));
+}
