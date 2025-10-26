@@ -1,92 +1,98 @@
 import express from "express";
-import mongoose from "mongoose";
 import cors from "cors";
-import path from "path";
-import { fileURLToPath } from "url";
-import { createRequire } from "module";
-import { Document, Packer, Paragraph, TextRun } from "docx";
-import fs from "fs";
-
-const require = createRequire(import.meta.url);
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { MongoClient } from "mongodb";
+import PizZip from "pizzip";
+import Docxtemplater from "docxtemplater";
+import fetch from "node-fetch";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static("public"));
 
-const MONGO_URL = process.env.MONGO_URL;
-mongoose
-  .connect(MONGO_URL, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => console.log("✅ MongoDB connecté"))
-  .catch((err) => console.error("❌ Erreur MongoDB:", err));
+const mongoUrl = process.env.MONGO_URL;
+const client = new MongoClient(mongoUrl);
+let db;
 
-const evaluationSchema = new mongoose.Schema({
-  classe: String,
-  semaine: String,
-  matiere: String,
-  unite: String,
-  critere: String,
-  date: { type: Date, default: Date.now },
-});
+async function initDB() {
+  await client.connect();
+  db = client.db("EvaluationsDB");
+  console.log("✅ MongoDB connecté !");
+}
+initDB();
 
-const Evaluation = mongoose.model("Evaluation", evaluationSchema);
-
-// 🔹 Ajouter une évaluation
-app.post("/api/evaluations", async (req, res) => {
+// 📌 Sauvegarde d’une évaluation
+app.post("/api/save", async (req, res) => {
   try {
-    const data = await Evaluation.create(req.body);
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    const { classe, semaine, matiere, unite, critere } = req.body;
+    if (!classe || !semaine || !matiere || !unite || !critere)
+      return res.status(400).json({ error: "Champs manquants" });
+
+    const coll = db.collection("evaluations");
+    await coll.insertOne({ classe, semaine, matiere, unite, critere, date: new Date() });
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
   }
 });
 
-// 🔹 Récupérer les évaluations d'une classe
+// 📌 Lecture par classe
 app.get("/api/evaluations/:classe", async (req, res) => {
-  const data = await Evaluation.find({ classe: req.params.classe });
+  const coll = db.collection("evaluations");
+  const data = await coll.find({ classe: req.params.classe }).toArray();
   res.json(data);
 });
 
-// 🔹 Supprimer une évaluation
+// 📌 Suppression d’une évaluation
 app.delete("/api/evaluations/:id", async (req, res) => {
-  await Evaluation.findByIdAndDelete(req.params.id);
-  res.json({ message: "Supprimée avec succès" });
+  const { ObjectId } = await import("mongodb");
+  const coll = db.collection("evaluations");
+  await coll.deleteOne({ _id: new ObjectId(req.params.id) });
+  res.json({ ok: true });
 });
 
-// 🔹 Générer le Word
+// 📄 Génération d’un fichier Word dynamique
 app.get("/api/generate-word/:classe", async (req, res) => {
-  const classe = req.params.classe;
-  const data = await Evaluation.find({ classe });
+  try {
+    const classe = req.params.classe;
+    const coll = db.collection("evaluations");
+    const evals = await coll.find({ classe }).toArray();
 
-  const doc = new Document({
-    sections: [
-      {
-        properties: {},
-        children: [
-          new Paragraph({
-            children: [new TextRun({ text: `Répartition des évaluations – ${classe}`, bold: true, size: 32 })],
-          }),
-          ...data.map(
-            (e) =>
-              new Paragraph({
-                children: [
-                  new TextRun({ text: `• ${e.semaine}: ${e.matiere} – ${e.unite} [Critère ${e.critere}]`, size: 24 }),
-                ],
-              })
-          ),
-        ],
-      },
-    ],
-  });
+    // Récupération du modèle distant
+    const templateURL = process.env.WORD_TEMPLATE_URL;
+    const response = await fetch(templateURL);
+    const content = await response.arrayBuffer();
 
-  const buffer = await Packer.toBuffer(doc);
-  const filePath = path.join(__dirname, `public/${classe}_Evaluations.docx`);
-  fs.writeFileSync(filePath, buffer);
-  res.download(filePath);
+    const zip = new PizZip(content);
+    const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
+
+    doc.render({
+      classe,
+      evaluations: evals.map((e, i) => ({
+        num: i + 1,
+        semaine: e.semaine,
+        matiere: e.matiere,
+        unite: e.unite,
+        critere: e.critere
+      }))
+    });
+
+    const buffer = doc.getZip().generate({ type: "nodebuffer" });
+
+    // Envoi direct du buffer au client
+    res.setHeader("Content-Disposition", `attachment; filename="${classe}_Evaluations.docx"`);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    );
+    res.send(buffer);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
-// 🔹 Démarrer le serveur localement
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Serveur sur http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Serveur prêt sur le port ${PORT}`));
