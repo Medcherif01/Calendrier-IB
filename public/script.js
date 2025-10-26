@@ -1,154 +1,122 @@
-// Public/script.js
+// Public/script.js (Frontend Logic)
+
+const API_BASE = '/api/evaluations';
+const selClasse = document.getElementById('classe');
+const lblClasse = document.getElementById('lblClasse');
+const formList = document.querySelectorAll('.box form');
 
 // Petite utilité anti-injection (affichage)
 function escapeHtml(str) {
+    if (!str) return '';
     return str.replace(/[&<>"']/g, s => ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;'
-    } [s]));
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[s]));
 }
 
-function getCurrentClasse() {
-    return document.getElementById('classe').value;
-}
-
-// Fonction pour créer l'élément DOM d'une évaluation
-function renderEvaluation(data) {
+// Fonction pour créer le DOM d'une évaluation enregistrée
+function createEvaluationChip(eval) {
     const div = document.createElement('div');
     div.className = 'planned';
-    // Stocke l'ID MongoDB pour la suppression
-    div.setAttribute('data-id', data._id); 
+    div.dataset.id = eval._id; // Stocke l'ID MongoDB pour la suppression
     div.innerHTML = `
-        <button class="del" title="Supprimer">✖</button>
-        <p><strong>Matière:</strong> ${escapeHtml(data.matiere)}</p>
-        <p><strong>Unité:</strong> ${escapeHtml(data.unite)}</p>
-        <p><strong>Critère:</strong> ${escapeHtml(data.critere)}</p>
+        <button class="del" title="Supprimer" data-id="${eval._id}">✖</button>
+        <p><strong>Matière:</strong> ${escapeHtml(eval.matiere)}</p>
+        <p><strong>Unité:</strong> ${escapeHtml(eval.unite)}</p>
+        <p><strong>Critère:</strong> ${escapeHtml(eval.critere)}</p>
     `;
     return div;
 }
 
-// Fonction pour vider et recharger les évaluations pour la classe sélectionnée
-async function fetchAndRenderEvaluations(classe) {
-    console.log(`Chargement des évaluations pour la classe: ${classe}`);
-
-    // 1. Supprimer toutes les évaluations existantes du DOM
+// 1. Charger les évaluations depuis l'API pour la classe sélectionnée
+async function loadEvaluations(classe) {
+    // 1. Nettoyer les évaluations existantes dans le DOM
     document.querySelectorAll('.planned').forEach(el => el.remove());
 
-    // 2. Récupérer les données depuis l'API
+    // 2. Récupérer les données
     try {
-        const response = await fetch(`/api/evaluations?classe=${classe}`);
-        if (!response.ok) throw new Error('Erreur lors du chargement des données.');
-        
+        const response = await fetch(`${API_BASE}?classe=${classe}`);
+        if (!response.ok) throw new Error('Erreur de chargement des données');
         const evaluations = await response.json();
 
-        // 3. Rendre les nouvelles évaluations
-        evaluations.forEach(evalData => {
-            const cell = document.getElementById(evalData.semaineId);
-            if (cell) {
-                const box = cell.querySelector('.box');
-                const newEvalElement = renderEvaluation(evalData);
-                
-                // Insérer avant le formulaire (s'il existe)
-                if (box) {
-                    cell.insertBefore(newEvalElement, box);
-                } else {
-                    cell.appendChild(newEvalElement);
-                }
+        // 3. Insérer dans le DOM
+        evaluations.forEach(eval => {
+            const cardElement = document.getElementById(eval.semaine);
+            if (cardElement) {
+                const newChip = createEvaluationChip(eval);
+                const boxForm = cardElement.querySelector('.box');
+                // Insérer le nouveau chip AVANT le formulaire d'ajout
+                cardElement.insertBefore(newChip, boxForm);
             }
         });
 
     } catch (error) {
-        console.error('Erreur lors de la récupération des évaluations:', error);
+        console.error("Erreur de récupération des évaluations:", error);
+        alert('Erreur lors du chargement des évaluations. Voir console.');
     }
 }
 
-
-// Ajout d’une évaluation (avec appel API)
-async function addEvaluation(e, semaineId) {
+// 2. Gestion de la soumission du formulaire (Ajout d'évaluation)
+async function handleAddEvaluation(e) {
     e.preventDefault();
-    const f = e.target;
-    const classe = getCurrentClasse();
-    
-    // Désactiver le bouton pendant l'attente
-    const ctaButton = f.querySelector('.cta');
-    ctaButton.disabled = true;
+    const form = e.target;
+    const classe = selClasse.value;
+    const semaine = form.dataset.semaine;
 
-    const matiere = f.elements.namedItem('matiere')?.value?.trim();
-    const unite = f.elements.namedItem('unite')?.value?.trim();
-    const critere = f.elements.namedItem('critere')?.value?.trim();
+    const data = {
+        classe: classe,
+        semaine: semaine,
+        matiere: form.elements.namedItem('matiere')?.value?.trim(),
+        unite: form.elements.namedItem('unite')?.value?.trim(),
+        critere: form.elements.namedItem('critere')?.value?.trim()
+    };
 
-    if (!matiere || !unite || !critere) {
+    if (!data.matiere || !data.unite || !data.critere) {
         alert('Veuillez remplir tous les champs.');
-        ctaButton.disabled = false;
         return;
     }
 
-    const evaluationData = {
-        classe,
-        semaineId,
-        matiere,
-        unite,
-        critere
-    };
-
     try {
-        const response = await fetch('/api/evaluations', {
+        const response = await fetch(API_BASE, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(evaluationData),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
         });
 
-        if (!response.ok) throw new Error('Échec de l\'enregistrement de l\'évaluation.');
+        if (!response.ok) throw new Error('Erreur côté serveur lors de l\'ajout.');
+        const newEval = await response.json();
 
-        const savedEvaluation = await response.json();
+        // Ajout au DOM et reset
+        const cardElement = document.getElementById(semaine);
+        const newChip = createEvaluationChip(newEval);
+        const boxForm = cardElement.querySelector('.box');
+        cardElement.insertBefore(newChip, boxForm);
 
-        // Ajout au DOM après succès de l'API
-        const cell = document.getElementById(semaineId);
-        const box = cell.querySelector('.box');
-        const newEvalElement = renderEvaluation(savedEvaluation);
-        
-        if (box) cell.insertBefore(newEvalElement, box);
-        else cell.appendChild(newEvalElement);
+        form.reset();
+        alert('Évaluation enregistrée avec succès!');
 
-        f.reset();
-        
     } catch (error) {
         console.error("Erreur lors de l'ajout de l'évaluation:", error);
-        alert(`Échec de l'enregistrement: ${error.message}`);
-    } finally {
-        ctaButton.disabled = false;
+        alert('Échec de l\'enregistrement. Erreur réseau ou serveur.');
     }
 }
 
-// Suppression (délégation d’événement avec appel API)
+// 3. Gestion de la suppression (Délégation d'événement)
 document.addEventListener('click', async (ev) => {
     const btn = ev.target.closest('.del');
     if (!btn) return;
     
+    if (!confirm('Êtes-vous sûr de vouloir supprimer cette évaluation?')) return;
+
+    const evalId = btn.dataset.id;
     const wrap = btn.closest('.planned');
-    const evaluationId = wrap.getAttribute('data-id');
-
-    if (!evaluationId) {
-        console.error("ID d'évaluation introuvable pour la suppression.");
-        return;
-    }
-    
-    if (!confirm('Êtes-vous sûr de vouloir supprimer cette évaluation ?')) return;
-
-    // Désactiver le bouton pendant l'attente
-    btn.disabled = true;
+    if (!evalId || !wrap) return;
 
     try {
-        const response = await fetch(`/api/evaluations/${evaluationId}`, {
-            method: 'DELETE',
+        const response = await fetch(`${API_BASE}/${evalId}`, {
+            method: 'DELETE'
         });
 
-        if (!response.ok) throw new Error('Échec de la suppression.');
+        if (!response.ok) throw new Error('Erreur lors de la suppression.');
 
         // Animation de sortie puis remove du DOM
         wrap.classList.add('fade-out');
@@ -156,27 +124,25 @@ document.addEventListener('click', async (ev) => {
 
     } catch (error) {
         console.error("Erreur lors de la suppression:", error);
-        alert(`Échec de la suppression: ${error.message}`);
-    } finally {
-        btn.disabled = false;
+        alert('Échec de la suppression. Erreur réseau ou serveur.');
     }
 });
 
 
-// Initialisation de l'application
-function initApp() {
-    const sel = document.getElementById('classe');
-    const lbl = document.getElementById('lblClasse');
+// 4. Initialisation et gestion du changement de classe
+document.addEventListener('DOMContentLoaded', () => {
+    // Attacher l'événement de soumission à tous les formulaires
+    formList.forEach(form => form.addEventListener('submit', handleAddEvaluation));
+
+    // MAJ du libellé de classe et chargement des données
+    const initialClasse = selClasse.value;
+    lblClasse.innerHTML = `<strong>Classe :</strong> ${initialClasse}`;
+    loadEvaluations(initialClasse);
     
-    // MAJ du libellé de classe et rechargement des données
-    function handleClassChange() {
-        const nouvelleClasse = sel.value;
-        lbl.innerHTML = '<strong>Classe :</strong> ' + nouvelleClasse;
-        fetchAndRenderEvaluations(nouvelleClasse);
-    }
-
-    sel.addEventListener('change', handleClassChange);
-
-    // Chargement initial pour la classe par défaut
-    handleClassChange(); 
-}
+    // Événement de changement de classe
+    selClasse.addEventListener('change', (e) => {
+        const nouvelleClasse = e.target.value;
+        lblClasse.innerHTML = `<strong>Classe :</strong> ${nouvelleClasse}`;
+        loadEvaluations(nouvelleClasse); // Recharger les données pour la nouvelle classe
+    });
+});
