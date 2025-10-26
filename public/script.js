@@ -62,8 +62,6 @@ async function fetchAndRenderEvaluations(classe) {
 
     } catch (error) {
         console.error('Erreur lors de la récupération des évaluations:', error);
-        // Afficher une alerte simple en cas d'erreur réseau
-        // alert('Impossible de charger les évaluations. Assurez-vous que l\'API est fonctionnelle.');
     }
 }
 
